@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset=utf-8>
+  <title>Hello World</title>
+  <style>
+    body {
+      margin: 0;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%
+    }
+  </style>
+</head>
+
+<body>
+  <script src="/reload/reload.js"></script>
+  <script src="static/three.js"></script>
+  <script src="static/OrbitControls.js"></script>
+  <script>
+    function getJSON(url) {
+      var Httpreq = new XMLHttpRequest(); // a new request
+      Httpreq.open("GET", url, false);
+      Httpreq.send(null);
+      return JSON.parse(Httpreq.responseText);
+    };
+
+    function findOne(haystack, arr) {
+      return arr.some(function(v) {
+        return haystack.indexOf(v) >= 0;
+      });
+    };
+
+    function cartesian2polar(position) {
+      var r = Math.sqrt(position.x * position.x + position.z * position.z + position.y * position.y);
+
+      return ({
+        r: r,
+        phi: Math.acos(position.y / r),
+        theta: Math.atan2(position.z, position.x)
+      });
+    }
+
+
+    function polar2canvas(polarPoint) {
+      return ({
+        y: polarPoint.phi / Math.PI,
+        x: (polarPoint.theta + Math.PI) / (2 * Math.PI)
+      })
+    }
+
+    function computeUVs(geometry) {
+      var polarVertices = geometry.vertices.map(cartesian2polar);
+
+      geometry.faceVertexUvs[0] = [];
+      geometry.faces.forEach(function(face) {
+
+        var uvs = [];
+        var ids = ['a', 'b', 'c'];
+        for (var i = 0; i < ids.length; i++) {
+          var vertexIndex = face[ids[i]];
+          var vertex = polarVertices[vertexIndex];
+
+          // If the vertice is located at the top or the bottom
+          // of the sphere, the x coordinates will always be 0
+          // This isn't good, since it will make all the faces
+          // which meet at this point use the same starting point
+          // for their texture ...
+          // this is a bit difficult to explainm, so try to comment out
+          // the following block and take look at the top of the
+          // spehere to see how it is mapped. Also have a look
+          // at the following image: https://dev.ngit.hr/vr/textures/sphere-uv.png
+          // if (vertex.theta === 0 && (vertex.phi === 0 || vertex.phi === Math.PI)) {
+          //
+          //   // at the sphere bottom and at the top different
+          //   // points are alligned differently - have a look at the
+          //   // following image https://dev.ngit.hr/vr/textures/sphere-uv.png
+          //   var alignedVertice = vertex.phi === 0 ? face.b : face.a;
+          //
+          //   vertex = {
+          //     phi: vertex.phi,
+          //     theta: polarVertices[alignedVertice].theta
+          //   };
+          // }
+
+          // Fixing vertices, which close the gap in the circle
+          // These are the last vertices in a row, and are at identical position as
+          // vertices which are at the first position in the row.
+          // This causes the [theta] angle to be miscalculated
+          // if (vertex.theta === Math.PI && cartesian2polar(face.normal).theta < Math.PI / 2) {
+          //   vertex.theta = -Math.PI;
+          // }
+
+          var canvasPoint = polar2canvas(vertex);
+
+          uvs.push(new THREE.Vector2(1 - canvasPoint.x, 1 - canvasPoint.y));
+        }
+
+        geometry.faceVertexUvs[0].push(uvs);
+      });
+      geometry.uvsNeedUpdate = true;
+    }
+
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+    var renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    var geometry = new THREE.Geometry();
+
+    var meshData = getJSON("http://localhost:3000/data.json");
+    console.log(meshData);
+
+    var waterTexture = new THREE.TextureLoader().load('static/Space-rect2.jpg');
+    waterTexture.wrapS = THREE.RepeatWrapping;
+    waterTexture.wrapT = THREE.RepeatWrapping;
+    waterTexture.repeat.x = 1;
+    waterTexture.repeat.y = 1;
+    var waterMaterial = new THREE.MeshPhongMaterial({
+      map: waterTexture,
+      bumpMap: waterTexture,
+      transparent: true,
+      opacity: 0.9
+    });
+
+    var material = new THREE.MeshPhongMaterial({
+      vertexColors: THREE.FaceColors,
+      polygonOffset: true,
+      polygonOffsetFactor: 1, // positive value pushes polygon further away
+      polygonOffsetUnits: 1,
+      transparent: true,
+      opacity: 0.9
+    });
+
+    meshData.points.forEach(function(point) {
+      geometry.vertices.push(
+        new THREE.Vector3(point[0], point[1], point[2])
+      );
+    });
+
+    meshData.faces.forEach(function(face) {
+      var newFace = new THREE.Face3(face[0], face[1], face[2]);
+
+      // if (findOne(meshData.waterPoints, face)) {
+      newFace.materialIndex = 1;
+      // } else {
+      //   newFace.color.setRGB(Math.random(), Math.random(), Math.random())
+      //   newFace.materialIndex = 0;
+      // }
+
+      geometry.faces.push(newFace);
+    });
+
+    computeUVs(geometry);
+
+    var materials = [material, waterMaterial];
+
+    var mesh = new THREE.Mesh(geometry, materials);
+    scene.add(mesh);
+
+    //wireframe
+    // var geo = new THREE.EdgesGeometry(mesh.geometry); // or WireframeGeometry
+    // var mat = new THREE.LineBasicMaterial({
+    //   color: 0xffffff,
+    //   linewidth: 3
+    // });
+    // var wireframe = new THREE.LineSegments(geo, mat);
+    // mesh.add(wireframe);
+
+    camera.position.z = 2;
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.25;
+    controls.enableZoom = true;
+
+    var light = new THREE.AmbientLight(0xffffff);
+    scene.add(light);
+
+    var animate = function() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    };
+
+    animate();
+  </script>
+</body>
+
+</html>
